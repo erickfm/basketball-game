@@ -9,21 +9,19 @@
   canvas { display: block; }
   .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   #stats { top: 14px; left: 16px; font-size: 15px; line-height: 1.5; }
-  #stats b { font-size: 22px; }
-  #last { top: 14px; right: 16px; font-size: 13px; text-align: right; line-height: 1.5; opacity: .85; }
-  #msg { top: 30%; left: 0; right: 0; text-align: center; font-size: 44px; font-weight: 800; letter-spacing: 1px; opacity: 0; transition: opacity .25s; }
-  #help { bottom: 12px; left: 16px; font-size: 12px; opacity: .65; line-height: 1.5; }
-  #modes { bottom: 12px; right: 16px; font-size: 13px; text-align: right; color: #ffd34d; }
+  #stats b { font-size: 26px; }
+  #last { top: 14px; right: 16px; font-size: 13px; text-align: right; line-height: 1.55; opacity: .85; }
+  #msg { top: 28%; left: 0; right: 0; text-align: center; font-size: 46px; font-weight: 800; letter-spacing: 1px; opacity: 0; transition: opacity .2s; }
+  #rel { top: calc(50% + 34px); left: 0; right: 0; text-align: center; font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0; transition: opacity .15s; }
+  #help { bottom: 12px; left: 16px; font-size: 12px; opacity: .6; line-height: 1.5; }
+  #modes { bottom: 12px; right: 16px; font-size: 13px; color: #ffd34d; }
   #cross { left: 50%; top: 50%; width: 0; height: 0; }
   #cross i { position: absolute; background: rgba(255,255,255,.9); box-shadow: 0 0 2px #000; }
   #cross .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
-  #power { bottom: 70px; left: 50%; transform: translateX(-50%); width: 320px; text-align: center; font-size: 13px; }
-  #bar { position: relative; height: 10px; margin-top: 4px; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.5); border-radius: 5px; overflow: hidden; }
-  #fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, #4cc3ff, #ffd34d, #ff5a3c); }
-  #ghost { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; display: none; }
+  #ring { position: absolute; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,.7); display: none; }
   #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(10,12,18,.78); cursor: pointer; }
-  #start .card { max-width: 520px; padding: 28px 32px; background: rgba(20,24,34,.95); border: 1px solid #333a4a; border-radius: 12px; line-height: 1.6; }
-  #start h1 { margin: 0 0 6px; font-size: 30px; }
+  #start .card { max-width: 500px; padding: 28px 32px; background: rgba(20,24,34,.95); border: 1px solid #333a4a; border-radius: 12px; line-height: 1.6; }
+  #start h1 { margin: 0 0 8px; font-size: 30px; }
   #start .go { margin-top: 16px; font-size: 18px; font-weight: 700; color: #ffd34d; }
   kbd { background: #2c3344; border: 1px solid #485068; border-radius: 4px; padding: 0 5px; font-size: 13px; }
 </style>
@@ -32,23 +30,18 @@
 <div id="stats" class="hud"></div>
 <div id="last" class="hud"></div>
 <div id="msg" class="hud"></div>
-<div id="cross" class="hud"><i class="dot"></i><i id="cl"></i><i id="cr"></i><i id="cu"></i><i id="cd"></i></div>
-<div id="power" class="hud"><span id="plabel"></span><div id="bar"><div id="fill"></div><div id="ghost"></div></div></div>
+<div id="rel" class="hud"></div>
+<div id="cross" class="hud"><div id="ring"></div><i class="dot"></i><i id="cl"></i><i id="cr"></i><i id="cu"></i><i id="cd"></i></div>
 <div id="modes" class="hud"></div>
 <div id="help" class="hud">
-  <kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>Space</kbd> jump · hold <kbd>LMB</kbd> to charge, release to shoot · hold <kbd>RMB</kbd> to aim<br>
-  <kbd>Wheel</kbd> backspin · <kbd>R</kbd> new ball · <kbd>T</kbd> trajectory trainer · <kbd>F</kbd> slow-mo · <kbd>Esc</kbd> pause
+  <kbd>WASD</kbd> move · <kbd>LMB</kbd> hold to jump, release to shoot · <kbd>RMB</kbd> focus · <kbd>Space</kbd> jump · <kbd>R</kbd> new ball · <kbd>F</kbd> slow-mo
 </div>
 <div id="start">
   <div class="card">
     <h1>Basketball Game</h1>
-    <div>A first-person shooting game where the ball physics decide everything: drag, backspin (Magnus lift), and friction on the rim, backboard, and floor.</div>
-    <ul>
-      <li>Hold <kbd>LMB</kbd> to charge launch speed, release to shoot. The ball leaves along your crosshair.</li>
-      <li>Hold <kbd>RMB</kbd> to aim: zooms in, slows you down, and tightens your spread a lot.</li>
-      <li>Moving or jumping makes you less accurate, and your momentum carries into the ball.</li>
-      <li>Beyond the arc = 3 points, inside = 2. Walk over loose balls to pick them up, or press <kbd>R</kbd> for a new one.</li>
-    </ul>
+    <div>Put the crosshair on the rim, or on the glass for a bank shot.</div>
+    <div><kbd>LMB</kbd> down to jump. Let go to shoot.</div>
+    <div style="margin-top:10px;opacity:.8">The ball leaves your hand at your body's speed plus your arm's. Release at the top of your jump and it flies true. Too early and it sails long, too late and it drops short, and drifting pushes it sideways. The ring tightens and goes green at the top.</div>
     <div class="go">Click to play</div>
   </div>
 </div>

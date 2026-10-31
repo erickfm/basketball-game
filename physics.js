@@ -56,17 +56,39 @@ function airAccel(v, w, out) {
   return out;
 }
 
-// Flight-only integration (no collisions), used for the trajectory trainer.
-export function simulateFlight(p0, v0, w0, maxT = 3, dt = 1 / 120) {
-  const p = { ...p0 }, v = { ...v0 }, w = { ...w0 }, a = {}, pts = [];
-  for (let t = 0; t < maxT && p.y > BALL_R; t += dt) {
-    airAccel(v, w, a);
-    v.x += a.x * dt; v.y += a.y * dt; v.z += a.z * dt;
-    p.x += v.x * dt; p.y += v.y * dt; p.z += v.z * dt;
-    const k = Math.exp(-SPIN_DECAY * dt); w.x *= k; w.y *= k; w.z *= k;
-    pts.push({ ...p });
-  }
-  return pts;
+// Find the launch velocity that carries the ball from p0 to target, using the
+// exact same integrator as World.step (so a perfect release lands exactly on
+// target). The launch angle is picked automatically from the shot geometry;
+// the speed is found by bisection. Spin is pure backspin of spinRev rev/s.
+export function solveShot(p0, target, spinRev = 2.5, h = 1 / 240) {
+  const ox = target.x - p0.x, oz = target.z - p0.z;
+  const d = Math.max(0.05, Math.hypot(ox, oz)), dy = target.y - p0.y;
+  const ux = Math.hypot(ox, oz) > 1e-6 ? ox / Math.hypot(ox, oz) : 0;
+  const uz = Math.hypot(ox, oz) > 1e-6 ? oz / Math.hypot(ox, oz) : -1;
+  const thetaDeg = clamp(50 + 8 * Math.max(0, 3 - d) / 3 + 0.4 * Math.atan2(dy, d) * 180 / Math.PI, 38, 72);
+  const th = thetaDeg * Math.PI / 180, c = Math.cos(th), s = Math.sin(th);
+  const w0 = spinRev * Math.PI * 2, decay = Math.exp(-SPIN_DECAY * h);
+  const heightAt = sp => {
+    let x = 0, y = 0, vx = sp * c, vy = sp * s, w = w0;
+    for (let t = 0; t < 6; t += h) {
+      const v = Math.hypot(vx, vy);
+      // backspin about (u x up): w x v = w (vx up - vy u)
+      vx += (-DRAG * v * vx - MAGNUS * w * vy) * h;
+      vy += (-DRAG * v * vy + MAGNUS * w * vx - G) * h;
+      const px = x, py = y;
+      x += vx * h; y += vy * h; w *= decay;
+      if (x >= d) return py + (y - py) * (d - px) / (x - px);
+      if (vx <= 0 || (vy < 0 && y < dy - 6)) return -1e9;
+    }
+    return -1e9;
+  };
+  let lo = 0.5, hi = 40;
+  for (let i = 0; i < 32; i++) { const m = (lo + hi) / 2; if (heightAt(m) < dy) lo = m; else hi = m; }
+  return {
+    v: { x: ux * c * hi, y: s * hi, z: uz * c * hi },
+    w: { x: -uz * w0, y: 0, z: ux * w0 },
+    speed: hi, angle: thetaDeg,
+  };
 }
 
 // ---------- net (verlet cloth) ----------

@@ -4,25 +4,27 @@ A first-person basketball shooting game in the browser, built around ball physic
 
 **Play:** https://erickfm.github.io/basketball-game/
 
-## Controls
+## How to play
+
+Put the crosshair on the rim, or on the glass for a bank shot. Press **LMB** to jump, and let go to shoot. That's it.
 
 | Input | Action |
 |---|---|
-| `WASD` | Move (`Shift` sprint, `Space` jump) |
-| Mouse | Look / aim. The ball leaves along your crosshair |
-| Hold `LMB` | Charge launch speed. Release to shoot |
-| Hold `RMB` | Aim down: zoom, slower movement, much tighter spread |
-| Mouse wheel | Adjust backspin (-2 to 5 rev/s) |
-| `R` | New ball (or walk over a loose one) |
-| `T` | Trajectory trainer (shows the ideal flight path) |
+| `WASD` | Move |
+| Mouse | Aim |
+| `LMB` | Hold: jump and raise the ball. Release: shoot |
+| `RMB` | Focus: slight zoom, steadier hands |
+| `Space` | Jump without shooting (press `LMB` in the air to shoot) |
+| `R` | Get a ball right away (otherwise it's passed back to you) |
 | `F` | Slow motion |
 
-## Why it's hard
+There's no power meter. You throw the right amount for wherever you're aiming, like a real shooter. What decides the shot is **the release**:
 
-- You choose the launch speed (shown in m/s, with a marker at your last shot) and the angle. Nothing is auto-aimed.
-- Hip shots have about 1.8° of spread and 3% power noise. Aiming (RMB) cuts that to 0.3° and 0.6%. Moving or jumping adds more.
-- Your movement carries into the ball, so shooting on the move changes the shot.
-- From the free-throw line, only about half the speeds in a 0.4 m/s window go in, and clean swishes need about ±0.03 m/s.
+- **The ball leaves with your hand's speed plus your body's speed.** Release at the top of your jump and your body adds nothing, so the shot is pure. Early (still rising) and it flies long. Late (falling) and it drops short. Drifting sideways or forward pushes the ball the same way.
+- The ring around the crosshair tightens as you reach the top of the jump and turns **green** in the perfect window (about ±25 ms). There's a little hang time at the top to give you a chance.
+- A sloppy release also adds sidespin, which curves the ball and changes how it comes off the rim.
+- From the free-throw line, swishes need about ±30 ms and makes about ±55 ms. Further out, the window is tighter.
+- The depth comes from those rules: stop before you pull up, compensate when you fade or drift, aim at the glass for bank shots (the top corner of the square works), and read your release timing, drift and entry angle in the top-right after every shot.
 
 ## Physics (`physics.js`)
 

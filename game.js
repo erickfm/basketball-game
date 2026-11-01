@@ -312,14 +312,10 @@ addEventListener('mousemove', e => {
 });
 addEventListener('mousedown', e => {
   if (!locked) return;
-  if (e.button === 0 && hasBall && !raising) {
-    if (player.onGround) jump();
-    raising = true; raiseT = 0;
-  }
+  if (e.button === 0 && hasBall) shoot();
   if (e.button === 2) focus = true;
 });
 addEventListener('mouseup', e => {
-  if (e.button === 0 && raising) { raising = false; if (locked && !player.onGround) shoot(); }
   if (e.button === 2) focus = false;
 });
 addEventListener('keydown', e => {
@@ -377,13 +373,17 @@ function shoot() {
   const p0 = held.getWorldPosition(new THREE.Vector3());
   const sol = solveShot(p0, target, SPIN);
 
-  const te = timingError(player.v.y);
+  const grounded = player.onGround;
+  if (grounded) player.takeoff.copy(player.p);
+  const te = grounded ? 0 : timingError(player.v.y);
   const ate = Math.abs(te);
+  // Set shots (feet on the floor) are all arm, so they get shakier with distance.
+  const strain = grounded ? Math.hypot(target.x - p0.x, target.z - p0.z) : 0;
   const drift = Math.hypot(player.v.x, player.v.z);
 
   // Random error is small on a clean, planted release and grows when you're sloppy.
-  const spreadDeg = THREE.MathUtils.lerp(SPREAD, FOCUS_SPREAD, focusT) + 3 * ate + 0.12 * drift;
-  const powerSigma = 0.004 + 0.05 * ate;
+  const spreadDeg = THREE.MathUtils.lerp(SPREAD, FOCUS_SPREAD, focusT) + 3 * ate + 0.12 * drift + 0.12 * strain;
+  const powerSigma = 0.004 + 0.05 * ate + 0.003 * strain;
   const v = new THREE.Vector3(sol.v.x, sol.v.y, sol.v.z);
   const speed = v.length();
   const dir = v.clone().normalize();
@@ -412,12 +412,13 @@ function shoot() {
   stats.shots++;
   const ms = Math.round(te * 1000);
   let grade, color;
-  if (ate < 0.025) { grade = 'PERFECT'; color = '#5cff8a'; stats.perfect++; sound('perfect'); }
+  if (grounded) { grade = 'SET SHOT'; color = '#cfd6e6'; }
+  else if (ate < 0.025) { grade = 'PERFECT'; color = '#5cff8a'; stats.perfect++; sound('perfect'); }
   else if (ate < 0.06) { grade = te < 0 ? `GOOD · ${-ms}ms early` : `GOOD · ${ms}ms late`; color = '#ffd34d'; }
   else { grade = te < 0 ? `EARLY · ${-ms}ms` : `LATE · ${ms}ms`; color = '#ff7a6a'; }
   flashRelease(grade, color);
   sound('release');
-  lastShot = { body, te, drift, speed: v.length(), angle: Math.asin(v.y / v.length()) * 180 / Math.PI, dist: fd, bank: target.z > BOARD.max.z && target.z < BOARD.max.z + BALL_R + 0.01 };
+  lastShot = { body, te, grounded, drift, speed: v.length(), angle: Math.asin(v.y / v.length()) * 180 / Math.PI, dist: fd, bank: target.z > BOARD.max.z && target.z < BOARD.max.z + BALL_R + 0.01 };
   pending = body;
   hasBall = false;
   kick = 0.035;
@@ -476,7 +477,6 @@ function updatePlayer(dt) {
   if (player.p.y <= 0 && !player.onGround) {
     dip = Math.min(0.08, -player.v.y * 0.012);
     player.p.y = 0; player.v.y = 0; player.onGround = true;
-    if (raising) { raising = false; flashRelease('HELD TOO LONG', '#ff7a6a'); }
   }
   const m = 0.4;
   player.p.x = THREE.MathUtils.clamp(player.p.x, GYM.xmin + m, GYM.xmax - m);
@@ -492,7 +492,7 @@ function updatePlayer(dt) {
   camera.rotation.set(player.pitch + kick, player.yaw, 0);
   const fov = THREE.MathUtils.lerp(FOV, FOCUS_FOV, focusT);
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
-  if (raising) raiseT += dt;
+  raising = hasBall && !player.onGround;   // ball goes up to the set point while you're in the air
 }
 
 const q = new THREE.Quaternion(), ax = new THREE.Vector3();
@@ -532,7 +532,7 @@ function updateHud(dt) {
   if (lastShot) {
     const s = lastShot.body.shot, ms = Math.round(lastShot.te * 1000);
     setText('last', `${lastShot.dist.toFixed(1)} m${lastShot.bank ? ' · bank' : ''}<br>` +
-      `release ${ms === 0 ? 'on the apex' : Math.abs(ms) + 'ms ' + (ms < 0 ? 'early' : 'late')} · drift ${lastShot.drift.toFixed(1)} m/s<br>` +
+      `${lastShot.grounded ? 'set shot' : 'release ' + (ms === 0 ? 'on the apex' : Math.abs(ms) + 'ms ' + (ms < 0 ? 'early' : 'late'))} · drift ${lastShot.drift.toFixed(1)} m/s<br>` +
       `${lastShot.speed.toFixed(2)} m/s @ ${lastShot.angle.toFixed(1)}°` + (s.entry != null ? ` · entry ${s.entry.toFixed(0)}°` : ''));
   }
   // Timing ring: tightens toward the apex of the jump, green inside the perfect window.

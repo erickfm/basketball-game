@@ -7,13 +7,12 @@ import {
 // ---------- tuning ----------
 const PHYS_DT = 1 / 240;
 const EYE = 1.75;
-const MOVE = 5.2, GROUND_ACCEL = 22, AIR_ACCEL = 1.5;
-const JUMP_V = 4.6, PLAYER_G = 16, HANG_V = 1.3, HANG_G = 8;   // softer gravity near the apex = hang time
-const CARRY_H = 0.5, CARRY_V = 0.35;     // how much body velocity ends up in the ball
-const SPREAD = 0.3, FOCUS_SPREAD = 0.12; // degrees, 1 sigma, perfect release standing still
-const SPIN = 2.5;                        // backspin rev/s on a clean release
-const FOV = 75, FOCUS_FOV = 60, SENS = 0.0022;
-const MAX_LOOSE = 6;
+const MOVE = 5.2, GROUND_ACCEL = 22, AIR_ACCEL = 2;
+const JUMP_V = 4.4, PLAYER_G = 15;
+const SPIN = 2.5;                 // backspin rev/s
+const RELOAD = 0.25;              // seconds until the next ball is in your hand
+const FOV = 75, ZOOM_FOV = 55, SENS = 0.0022;
+const MAX_LOOSE = 8;
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -176,7 +175,6 @@ function newBallMesh() {
   const m = new THREE.Mesh(ballGeo, ballMat); m.castShadow = true; return m;
 }
 const held = newBallMesh(); held.castShadow = false; camera.add(held);
-const passMesh = newBallMesh(); passMesh.visible = false; scene.add(passMesh);
 
 // ---------- net ----------
 const world = new World();
@@ -195,15 +193,6 @@ function updateNet() {
   }
   netGeo.attributes.position.needsUpdate = true;
 }
-
-// ---------- shot trail (so you can read the flight and any curve) ----------
-const TRAIL_N = 90;
-const trailPos = new Float32Array(TRAIL_N * 3);
-const trailGeo = new THREE.BufferGeometry();
-trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
-trail.frustumCulled = false; scene.add(trail);
-let trailBall = null, trailCount = 0;
 
 // ---------- audio ----------
 let actx = null, noiseBuf = null;
@@ -234,45 +223,35 @@ function sound(kind, speed = 5, dist = 0) {
   else if (kind === 'board') { tone(190, 120, 0.12, 0.7 * v); noise(900, 1, 0.08, 0.5 * v); }
   else if (kind === 'net') noise(2400, 0.8, 0.28, 0.35 / (1 + dist * 0.1));
   else if (kind === 'ball') tone(220, 120, 0.08, 0.4 * v);
-  else if (kind === 'release') noise(1800, 1.5, 0.09, 0.12);
-  else if (kind === 'catch') { tone(160, 90, 0.07, 0.5); noise(700, 1, 0.04, 0.25); }
-  else if (kind === 'perfect') { tone(880, 880, 0.12, 0.08, 'triangle'); }
+  else if (kind === 'release') noise(1800, 1.5, 0.08, 0.1);
   else { tone(330, 200, 0.12, 0.4 * v, 'triangle'); noise(1200, 1, 0.06, 0.3 * v); }
 }
 
 // ---------- state ----------
-const player = { p: new THREE.Vector3(0, 0, 5.5), v: new THREE.Vector3(), yaw: 0, pitch: 0.18, onGround: true, bob: 0, takeoff: new THREE.Vector3() };
+const player = { p: new THREE.Vector3(0, 0, 5.5), v: new THREE.Vector3(), yaw: 0, pitch: 0.2, onGround: true, bob: 0 };
 const keys = new Set();
-const stats = { makes: 0, shots: 0, points: 0, streak: 0, best: 0, perfect: 0 };
-let hasBall = true, raising = false, focus = false, focusT = 0, raiseT = 0;
-let timeScale = 1, locked = false, acc = 0;
-let kick = 0, dip = 0;
-let pending = null;              // the shot we're waiting on before the ball comes back
-let pass = null;                 // ball flying back to you
+const stats = { makes: 0, shots: 0, points: 0, streak: 0, best: 0 };
+let hasBall = true, reload = 0, zoom = false, zoomT = 0;
+let locked = false, acc = 0, dip = 0;
 const loose = [];
-let lastShot = null;
 
 const $ = id => document.getElementById(id);
 const setText = (() => { const cache = {}; return (id, html) => { if (cache[id] !== html) { cache[id] = html; $(id).innerHTML = html; } }; })();
-let msgTimer = 0, relTimer = 0;
-function flash(text, color = '#ffd34d', dur = 1.3) {
+let msgTimer = 0;
+function flash(text, color = '#ffd34d', dur = 1.1) {
   const m = $('msg'); m.textContent = text; m.style.color = color; m.style.opacity = 1; msgTimer = dur;
-}
-function flashRelease(text, color) {
-  const r = $('rel'); r.textContent = text; r.style.color = color; r.style.opacity = 1; relTimer = 0.9;
 }
 
 function resolveShot(b, made) {
   const s = b.shot; if (!s || s.resolved) return;
-  s.resolved = true; s.resolvedAt = performance.now();
+  s.resolved = true;
   if (made) {
     stats.makes++; stats.points += s.points; stats.streak++; stats.best = Math.max(stats.best, stats.streak);
     const swish = !s.rim && !s.board;
-    const label = swish ? 'SWISH' : s.board && !s.rim ? 'BANK' : s.board ? 'OFF THE GLASS' : 'IN';
-    flash(`${label}  +${s.points}`, swish ? '#7dffb0' : '#ffd34d');
+    flash(`${swish ? 'SWISH' : s.board && !s.rim ? 'BANK' : 'IN'}  +${s.points}`, swish ? '#7dffb0' : '#ffd34d');
   } else {
     stats.streak = 0;
-    flash(!s.rim && !s.board ? 'AIRBALL' : 'MISS', '#ff7a6a', 0.9);
+    flash(!s.rim && !s.board ? 'AIRBALL' : 'MISS', '#ff7a6a', 0.8);
   }
 }
 
@@ -290,8 +269,6 @@ world.on((type, b, d) => {
   } else if (type === 'score') {
     sound('net', 1, dist);
     resolveShot(b, true);
-  } else if (type === 'cross' && b.shot && b.shot.entry == null) {
-    b.shot.entry = d.entry * 180 / Math.PI;
   }
 });
 
@@ -301,69 +278,54 @@ $('start').addEventListener('click', () => { initAudio(); canvas.requestPointerL
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   $('start').style.display = locked ? 'none' : 'flex';
-  if (!locked) { raising = false; focus = false; keys.clear(); }
+  if (!locked) { zoom = false; keys.clear(); }
 });
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mousemove', e => {
   if (!locked) return;
-  const s = SENS * (1 - 0.35 * focusT);
+  const s = SENS * camera.fov / FOV;            // same feel when zoomed
   player.yaw -= e.movementX * s;
   player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * s));
 });
 addEventListener('mousedown', e => {
   if (!locked) return;
   if (e.button === 0 && hasBall) shoot();
-  if (e.button === 2) focus = true;
+  if (e.button === 2) zoom = true;
 });
-addEventListener('mouseup', e => {
-  if (e.button === 2) focus = false;
-});
+addEventListener('mouseup', e => { if (e.button === 2) zoom = false; });
 addEventListener('keydown', e => {
   if (!locked) return;
   keys.add(e.code);
-  if (e.code === 'KeyR' && !hasBall) giveBall();
-  if (e.code === 'KeyF') timeScale = timeScale === 1 ? 0.25 : 1;
-  if (e.code === 'Space' && player.onGround) jump();
+  if (e.code === 'Space' && player.onGround) { player.v.y = JUMP_V; player.onGround = false; }
 });
 addEventListener('keyup', e => keys.delete(e.code));
 
-function jump() {
-  player.v.y = JUMP_V; player.onGround = false;
-  player.takeoff.copy(player.p);
-}
-
 // ---------- shooting ----------
-const fwd = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(), tmp = new THREE.Vector3();
-const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const fwd = new THREE.Vector3();
 
-// Seconds from the apex of the jump given vertical body speed. Negative = early (still rising).
-function timingError(vy) {
-  const a = Math.abs(vy);
-  const t = a < HANG_V ? a / HANG_G : HANG_V / HANG_G + (a - HANG_V) / PLAYER_G;
-  return vy > 0 ? -t : t;
-}
-
-// Where the crosshair points: the glass (bank shot), the rim plane, or failing that somewhere on the floor.
+// Where the ball should go. Near the hoop we aim on an upright plane through the
+// rim that faces you, so up/down aim is forgiving and you never fight for distance.
+// Otherwise: the glass (bank shot), then wherever the crosshair lands.
 function aimTarget(o, d) {
-  let best = null, tBest = Infinity;
+  const hx = o.x - RIM.x, hz = o.z - RIM.z, hd = Math.hypot(hx, hz);
+  if (hd > 1.0) {
+    const nx = hx / hd, nz = hz / hd, dn = d.x * nx + d.z * nz;
+    if (dn < -1e-6) {
+      const t = ((RIM.x - o.x) * nx + (RIM.z - o.z) * nz) / dn;
+      const p = { x: o.x + d.x * t, y: o.y + d.y * t, z: o.z + d.z * t };
+      if (t > 0 && Math.hypot(p.x - RIM.x, p.z - RIM.z) < 0.9 && Math.abs(p.y - RIM.y) < 0.6) return p;
+    }
+  } else if (d.y > 1e-6 && o.y < RIM.y) {
+    const t = (RIM.y - o.y) / d.y;                // standing under it: use the rim plane
+    return { x: o.x + d.x * t, y: RIM.y, z: o.z + d.z * t };
+  }
   if (d.z < -1e-6) {
     const t = (BOARD.max.z - o.z) / d.z;
-    if (t > 0) {
-      const x = o.x + d.x * t, y = o.y + d.y * t;
-      if (x > BOARD.min.x && x < BOARD.max.x && y > BOARD.min.y && y < BOARD.max.y) {
-        tBest = t; best = { x, y, z: BOARD.max.z + BALL_R };
-      }
-    }
+    const x = o.x + d.x * t, y = o.y + d.y * t;
+    if (t > 0 && x > BOARD.min.x && x < BOARD.max.x && y > BOARD.min.y && y < BOARD.max.y) return { x, y, z: BOARD.max.z + BALL_R };
   }
-  if (d.y > 1e-6 && o.y < RIM.y) {
-    const t = (RIM.y - o.y) / d.y;
-    if (t < tBest && t < 40) { tBest = t; best = { x: o.x + d.x * t, y: RIM.y, z: o.z + d.z * t }; }
-  }
-  if (!best) {
-    const t = d.y < -1e-6 ? Math.min(25, (BALL_R - o.y) / d.y) : 12;
-    best = { x: o.x + d.x * t, y: Math.max(BALL_R, o.y + d.y * t), z: o.z + d.z * t };
-  }
-  return best;
+  const t = d.y < -1e-6 ? Math.min(25, (BALL_R - o.y) / d.y) : 12;
+  return { x: o.x + d.x * t, y: Math.max(BALL_R, o.y + d.y * t), z: o.z + d.z * t };
 }
 
 function shoot() {
@@ -373,34 +335,10 @@ function shoot() {
   const p0 = held.getWorldPosition(new THREE.Vector3());
   const sol = solveShot(p0, target, SPIN);
 
-  const grounded = player.onGround;
-  if (grounded) player.takeoff.copy(player.p);
-  const te = grounded ? 0 : timingError(player.v.y);
-  const ate = Math.abs(te);
-  // Set shots (feet on the floor) are all arm, so they get shakier with distance.
-  const strain = grounded ? Math.hypot(target.x - p0.x, target.z - p0.z) : 0;
-  const drift = Math.hypot(player.v.x, player.v.z);
-
-  // Random error is small on a clean, planted release and grows when you're sloppy.
-  const spreadDeg = THREE.MathUtils.lerp(SPREAD, FOCUS_SPREAD, focusT) + 3 * ate + 0.12 * drift + 0.12 * strain;
-  const powerSigma = 0.004 + 0.05 * ate + 0.003 * strain;
-  const v = new THREE.Vector3(sol.v.x, sol.v.y, sol.v.z);
-  const speed = v.length();
-  const dir = v.clone().normalize();
-  right.crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-  up.crossVectors(right, dir).normalize();
-  const rad = spreadDeg * Math.PI / 180;
-  dir.addScaledVector(right, Math.tan(gauss() * rad)).addScaledVector(up, Math.tan(gauss() * rad)).normalize();
-  v.copy(dir).multiplyScalar(speed * (1 + gauss() * powerSigma));
-  // The physics part: your body's velocity is in the ball too.
-  v.x += player.v.x * CARRY_H; v.z += player.v.z * CARRY_H; v.y += player.v.y * CARRY_V;
-  // Sloppy releases come off the side of the hand: sidespin curves the ball and changes how it takes the rim.
-  const w = { x: sol.w.x, y: gauss() * 45 * ate, z: sol.w.z };
-
-  const body = makeBall(p0, v, w);
-  const fd = Math.hypot(player.takeoff.x - RIM.x, player.takeoff.z - RIM.z);
-  const three = fd > THREE_PT || (Math.abs(player.takeoff.x) > CORNER_X && player.takeoff.z < CORNER_Z);
-  body.shot = { points: three ? 3 : 2, rim: false, board: false, resolved: false, entry: null, releasedAt: performance.now() };
+  const body = makeBall(p0, sol.v, sol.w);
+  const fd = Math.hypot(player.p.x - RIM.x, player.p.z - RIM.z);
+  const three = fd > THREE_PT || (Math.abs(player.p.x) > CORNER_X && player.p.z < CORNER_Z);
+  body.shot = { points: three ? 3 : 2, rim: false, board: false, resolved: false };
   const mesh = newBallMesh();
   mesh.position.copy(p0);
   mesh.quaternion.copy(held.getWorldQuaternion(new THREE.Quaternion()));
@@ -410,19 +348,8 @@ function shoot() {
   while (loose.length > MAX_LOOSE) removeLoose(loose[0]);
 
   stats.shots++;
-  const ms = Math.round(te * 1000);
-  let grade, color;
-  if (grounded) { grade = 'SET SHOT'; color = '#cfd6e6'; }
-  else if (ate < 0.025) { grade = 'PERFECT'; color = '#5cff8a'; stats.perfect++; sound('perfect'); }
-  else if (ate < 0.06) { grade = te < 0 ? `GOOD · ${-ms}ms early` : `GOOD · ${ms}ms late`; color = '#ffd34d'; }
-  else { grade = te < 0 ? `EARLY · ${-ms}ms` : `LATE · ${ms}ms`; color = '#ff7a6a'; }
-  flashRelease(grade, color);
   sound('release');
-  lastShot = { body, te, grounded, drift, speed: v.length(), angle: Math.asin(v.y / v.length()) * 180 / Math.PI, dist: fd, bank: target.z > BOARD.max.z && target.z < BOARD.max.z + BALL_R + 0.01 };
-  pending = body;
-  hasBall = false;
-  kick = 0.035;
-  trailBall = body; trailCount = 0;
+  hasBall = false; reload = RELOAD;
 }
 
 function removeLoose(l) {
@@ -430,52 +357,25 @@ function removeLoose(l) {
   scene.remove(l.mesh);
   world.balls.splice(world.balls.indexOf(l.body), 1);
   loose.splice(loose.indexOf(l), 1);
-  if (trailBall === l.body) trailBall = null;
-}
-
-// Rebounder passes you the next ball as soon as the shot is decided.
-function updateReturn(dt) {
-  if (hasBall || pass) return;
-  const s = pending && pending.shot;
-  const now = performance.now();
-  const ready = !s || (s.resolved && now - s.resolvedAt > 250) || now - s.releasedAt > 2200;
-  if (!ready) return;
-  const from = new THREE.Vector3(RIM.x + 0.4, 1.3, RIM.z + 0.8);
-  pass = { from, t: 0, dur: Math.max(0.22, from.distanceTo(camera.position) / 16) };
-  passMesh.visible = true;
-}
-function updatePass(dt) {
-  if (!pass) return;
-  pass.t += dt;
-  const k = Math.min(1, pass.t / pass.dur);
-  const to = held.getWorldPosition(tmp);
-  passMesh.position.lerpVectors(pass.from, to, k);
-  passMesh.position.y += Math.sin(k * Math.PI) * 0.6;
-  passMesh.rotation.x -= dt * 20;
-  if (k >= 1) giveBall();
-}
-function giveBall() {
-  pass = null; passMesh.visible = false; pending = null;
-  hasBall = true; sound('catch');
 }
 
 // ---------- update ----------
 function updatePlayer(dt) {
-  focusT = THREE.MathUtils.clamp(focusT + (focus ? dt : -dt) / 0.08, 0, 1);
+  zoomT = THREE.MathUtils.clamp(zoomT + (zoom ? dt : -dt) / 0.1, 0, 1);
   const f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
   const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   const sinY = Math.sin(player.yaw), cosY = Math.cos(player.yaw);
   let wx = -sinY * f + cosY * s, wz = -cosY * f - sinY * s;
   const wl = Math.hypot(wx, wz);
-  const speed = wl > 0 ? MOVE * (1 - 0.2 * focusT) : 0;
   if (wl > 0) { wx /= wl; wz /= wl; }
+  const speed = wl > 0 ? MOVE : 0;
   const k = 1 - Math.exp(-(player.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt);
   player.v.x += (wx * speed - player.v.x) * k;
   player.v.z += (wz * speed - player.v.z) * k;
-  if (!player.onGround) player.v.y -= (Math.abs(player.v.y) < HANG_V ? HANG_G : PLAYER_G) * dt;
+  if (!player.onGround) player.v.y -= PLAYER_G * dt;
   player.p.addScaledVector(player.v, dt);
   if (player.p.y <= 0 && !player.onGround) {
-    dip = Math.min(0.08, -player.v.y * 0.012);
+    dip = Math.min(0.06, -player.v.y * 0.01);
     player.p.y = 0; player.v.y = 0; player.onGround = true;
   }
   const m = 0.4;
@@ -486,91 +386,55 @@ function updatePlayer(dt) {
 
   const hs = Math.hypot(player.v.x, player.v.z);
   if (player.onGround) player.bob += hs * dt * 1.8;
-  const bob = player.onGround ? Math.sin(player.bob * 2) * 0.02 * Math.min(1, hs / MOVE) : 0;
-  kick *= Math.exp(-14 * dt); dip *= Math.exp(-10 * dt);
+  const bob = player.onGround ? Math.sin(player.bob * 2) * 0.015 * Math.min(1, hs / MOVE) : 0;
+  dip *= Math.exp(-10 * dt);
   camera.position.set(player.p.x, player.p.y + EYE + bob - dip, player.p.z);
-  camera.rotation.set(player.pitch + kick, player.yaw, 0);
-  const fov = THREE.MathUtils.lerp(FOV, FOCUS_FOV, focusT);
+  camera.rotation.set(player.pitch, player.yaw, 0);
+  const fov = THREE.MathUtils.lerp(FOV, ZOOM_FOV, zoomT);
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
-  raising = hasBall && !player.onGround;   // ball goes up to the set point while you're in the air
 }
 
 const q = new THREE.Quaternion(), ax = new THREE.Vector3();
 function syncBalls(dt) {
-  const now = performance.now();
   for (const l of [...loose]) {
     const b = l.body;
     l.mesh.position.set(b.p.x, b.p.y, b.p.z);
     const wl = Math.hypot(b.w.x, b.w.y, b.w.z);
     if (wl > 1e-4) { q.setFromAxisAngle(ax.set(b.w.x / wl, b.w.y / wl, b.w.z / wl), wl * dt); l.mesh.quaternion.premultiply(q); }
     if (b.shot && !b.shot.resolved && b.age > 8) resolveShot(b, false);   // stuck on the rim, etc.
-    if (b.age > 12) removeLoose(l);
+    if (b.age > 15) removeLoose(l);
   }
-  if (trailBall) {
-    if (trailCount < TRAIL_N && trailBall.age < 3) {
-      trailPos[trailCount * 3] = trailBall.p.x; trailPos[trailCount * 3 + 1] = trailBall.p.y; trailPos[trailCount * 3 + 2] = trailBall.p.z;
-      trailCount++;
-      trailGeo.setDrawRange(0, trailCount);
-      trailGeo.attributes.position.needsUpdate = true;
-    }
-  }
-  trail.visible = !!trailBall && trailCount > 1;
 }
 
-const idlePos = new THREE.Vector3(0.3, -0.36, -0.8), setPos = new THREE.Vector3(0.26, -0.2, -0.9);
-function updateViewModel(dt) {
+// The held ball sits still in the lower right; a new one pops in after each shot.
+held.position.set(0.34, -0.38, -1.0);
+function updateHeld(dt) {
+  if (!hasBall) {
+    reload -= dt;
+    if (reload <= 0) { hasBall = true; held.scale.setScalar(0.2); }
+  }
   held.visible = hasBall;
-  if (!hasBall) return;
-  const target = raising ? setPos : idlePos;
-  held.position.lerp(target, 1 - Math.exp(-(raising ? 30 : 14) * dt));
-  if (player.onGround && !raising) held.position.y += Math.abs(Math.sin(player.bob * 2)) * -0.02;
+  if (hasBall) held.scale.setScalar(Math.min(1, held.scale.x + dt * 8));
 }
 
 function updateHud(dt) {
   const pct = stats.shots ? Math.round(stats.makes / stats.shots * 100) : 0;
-  setText('stats', `<b>${stats.points}</b> pts<br>${stats.makes}/${stats.shots} (${pct}%) · streak ${stats.streak} · best ${stats.best}<br>perfect releases ${stats.perfect}`);
-  if (lastShot) {
-    const s = lastShot.body.shot, ms = Math.round(lastShot.te * 1000);
-    setText('last', `${lastShot.dist.toFixed(1)} m${lastShot.bank ? ' · bank' : ''}<br>` +
-      `${lastShot.grounded ? 'set shot' : 'release ' + (ms === 0 ? 'on the apex' : Math.abs(ms) + 'ms ' + (ms < 0 ? 'early' : 'late'))} · drift ${lastShot.drift.toFixed(1)} m/s<br>` +
-      `${lastShot.speed.toFixed(2)} m/s @ ${lastShot.angle.toFixed(1)}°` + (s.entry != null ? ` · entry ${s.entry.toFixed(0)}°` : ''));
-  }
-  // Timing ring: tightens toward the apex of the jump, green inside the perfect window.
-  const ring = $('ring');
-  if (raising && !player.onGround) {
-    const ate = Math.abs(timingError(player.v.y));
-    const size = 14 + Math.min(70, ate * 420);
-    ring.style.display = 'block';
-    ring.style.width = ring.style.height = size + 'px';
-    ring.style.left = ring.style.top = -size / 2 - 2 + 'px';
-    ring.style.borderColor = ate < 0.025 ? '#5cff8a' : ate < 0.06 ? '#ffd34d' : 'rgba(255,255,255,.8)';
-  } else ring.style.display = 'none';
-  const gap = 5 + 6 * (1 - focusT) + Math.min(14, Math.hypot(player.v.x, player.v.z) * 2.5);
-  const len = 7;
-  Object.assign($('cl').style, { width: len + 'px', height: '2px', left: -(gap + len) + 'px', top: '-1px' });
-  Object.assign($('cr').style, { width: len + 'px', height: '2px', left: gap + 'px', top: '-1px' });
-  Object.assign($('cu').style, { width: '2px', height: len + 'px', left: '-1px', top: -(gap + len) + 'px' });
-  Object.assign($('cd').style, { width: '2px', height: len + 'px', left: '-1px', top: gap + 'px' });
-  setText('modes', timeScale < 1 ? 'SLOW-MO' : '');
+  setText('stats', `<b>${stats.points}</b> pts<br>${stats.makes}/${stats.shots} (${pct}%) · streak ${stats.streak} · best ${stats.best}`);
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').style.opacity = 0; }
-  if (relTimer > 0) { relTimer -= dt; if (relTimer <= 0) $('rel').style.opacity = 0; }
 }
 
 let last = performance.now();
 function frame(now) {
-  const rdt = Math.min(0.05, (now - last) / 1000); last = now;
-  const dt = rdt * timeScale;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
   updatePlayer(dt);
   acc += dt;
   let n = 0;
-  while (acc >= PHYS_DT && n++ < 30) { world.step(PHYS_DT); acc -= PHYS_DT; }
-  if (n > 30) acc = 0;
+  while (acc >= PHYS_DT && n < 30) { world.step(PHYS_DT); acc -= PHYS_DT; n++; }
+  if (n >= 30) acc = 0;
   syncBalls(dt);
   updateNet();
-  updateViewModel(rdt);
-  updateReturn(dt);
-  updatePass(dt);
-  updateHud(rdt);
+  updateHeld(dt);
+  updateHud(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

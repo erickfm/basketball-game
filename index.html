@@ -10,15 +10,10 @@
   .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   #stats { top: 14px; left: 16px; font-size: 15px; line-height: 1.5; }
   #stats b { font-size: 26px; }
-  #last { top: 14px; right: 16px; font-size: 13px; text-align: right; line-height: 1.55; opacity: .85; }
   #msg { top: 28%; left: 0; right: 0; text-align: center; font-size: 46px; font-weight: 800; letter-spacing: 1px; opacity: 0; transition: opacity .2s; }
-  #rel { top: calc(50% + 34px); left: 0; right: 0; text-align: center; font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0; transition: opacity .15s; }
   #help { bottom: 12px; left: 16px; font-size: 12px; opacity: .6; line-height: 1.5; }
-  #modes { bottom: 12px; right: 16px; font-size: 13px; color: #ffd34d; }
   #cross { left: 50%; top: 50%; width: 0; height: 0; }
-  #cross i { position: absolute; background: rgba(255,255,255,.9); box-shadow: 0 0 2px #000; }
-  #cross .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
-  #ring { position: absolute; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,.7); display: none; }
+  #cross .dot { position: absolute; width: 4px; height: 4px; left: -2px; top: -2px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
   #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(10,12,18,.78); cursor: pointer; }
   #start .card { max-width: 500px; padding: 28px 32px; background: rgba(20,24,34,.95); border: 1px solid #333a4a; border-radius: 12px; line-height: 1.6; }
   #start h1 { margin: 0 0 8px; font-size: 30px; }
@@ -28,20 +23,13 @@
 </head>
 <body>
 <div id="stats" class="hud"></div>
-<div id="last" class="hud"></div>
 <div id="msg" class="hud"></div>
-<div id="rel" class="hud"></div>
-<div id="cross" class="hud"><div id="ring"></div><i class="dot"></i><i id="cl"></i><i id="cr"></i><i id="cu"></i><i id="cd"></i></div>
-<div id="modes" class="hud"></div>
-<div id="help" class="hud">
-  <kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>LMB</kbd> shoot · <kbd>RMB</kbd> focus · <kbd>R</kbd> new ball · <kbd>F</kbd> slow-mo
-</div>
+<div id="cross" class="hud"><i class="dot"></i></div>
+<div id="help" class="hud"><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Click</kbd> shoot · <kbd>RMB</kbd> zoom</div>
 <div id="start">
   <div class="card">
     <h1>Basketball Game</h1>
-    <div>Put the crosshair on the rim, or on the glass for a bank shot.</div>
-    <div><kbd>LMB</kbd> shoots. <kbd>Space</kbd> jumps.</div>
-    <div style="margin-top:10px;opacity:.8">Jump shots are the best shot in the game, if you time them. The ball leaves at your arm's speed plus your body's. Shoot at the top of your jump and it flies true. Too early and it sails long, too late and it drops short, and drifting pushes it sideways. The ring tightens and goes green at the top. Set shots from the floor are fine up close but get shaky with distance.</div>
+    <div>Aim at the hoop and click. Aim at the glass for a bank shot.</div>
     <div class="go">Click to play</div>
   </div>
 </div>

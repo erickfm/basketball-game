@@ -3,6 +3,7 @@ import {
   World, makeBall, solveShot, BALL_R, RIM, BOARD, BRACKET, ARM, POLE, GYM,
   THREE_PT, CORNER_X, CORNER_Z,
 } from './physics.js';
+import { ShotLogger } from './logger.js';
 
 // ---------- tuning ----------
 const PHYS_DT = 1 / 240;
@@ -10,8 +11,8 @@ const EYE = 1.75;
 const MOVE = 5.2, GROUND_ACCEL = 22, AIR_ACCEL = 2;
 const JUMP_V = 4.4, PLAYER_G = 15;
 const SPIN = 2.5;                 // backspin rev/s
-const RELOAD = 0.25;              // seconds until the next ball is in your hand
-const FOV = 75, ZOOM_FOV = 55, SENS = 0.0022;
+const RELOAD = 0.35;              // seconds until the next ball comes up into your hands
+const FOV = 60, ZOOM_FOV = 45, SENS = 0.0022;   // vertical FOV; 60 is ~92 deg horizontal at 16:9
 const MAX_LOOSE = 8;
 
 // ---------- renderer / scene ----------
@@ -234,6 +235,8 @@ const stats = { makes: 0, shots: 0, points: 0, streak: 0, best: 0 };
 let hasBall = true, reload = 0, zoom = false, zoomT = 0;
 let locked = false, acc = 0, dip = 0;
 const loose = [];
+const logger = new ShotLogger();
+const projTmp = new THREE.Vector3();
 
 const $ = id => document.getElementById(id);
 const setText = (() => { const cache = {}; return (id, html) => { if (cache[id] !== html) { cache[id] = html; $(id).innerHTML = html; } }; })();
@@ -248,15 +251,20 @@ function resolveShot(b, made) {
   if (made) {
     stats.makes++; stats.points += s.points; stats.streak++; stats.best = Math.max(stats.best, stats.streak);
     const swish = !s.rim && !s.board;
+    logger.result(b, swish ? 'swish' : s.board && !s.rim ? 'bank' : 'make');
     flash(`${swish ? 'SWISH' : s.board && !s.rim ? 'BANK' : 'IN'}  +${s.points}`, swish ? '#7dffb0' : '#ffd34d');
   } else {
     stats.streak = 0;
+    logger.result(b, !s.rim && !s.board ? 'airball' : 'miss');
     flash(!s.rim && !s.board ? 'AIRBALL' : 'MISS', '#ff7a6a', 0.8);
   }
 }
 
 world.on((type, b, d) => {
   const dist = Math.hypot(b.p.x - camera.position.x, b.p.y - camera.position.y, b.p.z - camera.position.z);
+  if (type === 'hit') logger.event(b, { type, kind: d.kind, speed: Math.round(d.speed * 1000) / 1000 });
+  else if (type === 'cross') logger.event(b, { type, entryDeg: Math.round(d.entry * 1800 / Math.PI) / 10 });
+  else logger.event(b, { type });
   if (type === 'hit') {
     if (b.shot && !b.shot.resolved) {
       if (d.kind === 'rim') b.shot.rim = true;
@@ -274,7 +282,15 @@ world.on((type, b, d) => {
 
 // ---------- input ----------
 const canvas = renderer.domElement;
-$('start').addEventListener('click', () => { initAudio(); canvas.requestPointerLock(); });
+// Raw mouse input (no OS acceleration), like real FPS games. Falls back where unsupported.
+function lockPointer() {
+  try {
+    const r = canvas.requestPointerLock({ unadjustedMovement: true });
+    if (r && r.then) r.then(() => logger.note({ rawMouse: true }))
+      .catch(() => { logger.note({ rawMouse: false }); canvas.requestPointerLock(); });
+  } catch { canvas.requestPointerLock(); }
+}
+$('start').addEventListener('click', () => { initAudio(); lockPointer(); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   $('start').style.display = locked ? 'none' : 'flex';
@@ -283,6 +299,7 @@ document.addEventListener('pointerlockchange', () => {
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mousemove', e => {
   if (!locked) return;
+  logger.onMouse(e.movementX, e.movementY);
   const s = SENS * camera.fov / FOV;            // same feel when zoomed
   player.yaw -= e.movementX * s;
   player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * s));
@@ -296,6 +313,7 @@ addEventListener('mouseup', e => { if (e.button === 2) zoom = false; });
 addEventListener('keydown', e => {
   if (!locked) return;
   keys.add(e.code);
+  if (e.code === 'KeyL') logger.save();
   if (e.code === 'Space' && player.onGround) { player.v.y = JUMP_V; player.onGround = false; }
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -313,19 +331,19 @@ function aimTarget(o, d) {
     if (dn < -1e-6) {
       const t = ((RIM.x - o.x) * nx + (RIM.z - o.z) * nz) / dn;
       const p = { x: o.x + d.x * t, y: o.y + d.y * t, z: o.z + d.z * t };
-      if (t > 0 && Math.hypot(p.x - RIM.x, p.z - RIM.z) < 0.9 && Math.abs(p.y - RIM.y) < 0.6) return p;
+      if (t > 0 && Math.hypot(p.x - RIM.x, p.z - RIM.z) < 0.9 && Math.abs(p.y - RIM.y) < 0.6) return { ...p, kind: 'hoop' };
     }
   } else if (d.y > 1e-6 && o.y < RIM.y) {
     const t = (RIM.y - o.y) / d.y;                // standing under it: use the rim plane
-    return { x: o.x + d.x * t, y: RIM.y, z: o.z + d.z * t };
+    return { x: o.x + d.x * t, y: RIM.y, z: o.z + d.z * t, kind: 'rim-plane' };
   }
   if (d.z < -1e-6) {
     const t = (BOARD.max.z - o.z) / d.z;
     const x = o.x + d.x * t, y = o.y + d.y * t;
-    if (t > 0 && x > BOARD.min.x && x < BOARD.max.x && y > BOARD.min.y && y < BOARD.max.y) return { x, y, z: BOARD.max.z + BALL_R };
+    if (t > 0 && x > BOARD.min.x && x < BOARD.max.x && y > BOARD.min.y && y < BOARD.max.y) return { x, y, z: BOARD.max.z + BALL_R, kind: 'board' };
   }
   const t = d.y < -1e-6 ? Math.min(25, (BALL_R - o.y) / d.y) : 12;
-  return { x: o.x + d.x * t, y: Math.max(BALL_R, o.y + d.y * t), z: o.z + d.z * t };
+  return { x: o.x + d.x * t, y: Math.max(BALL_R, o.y + d.y * t), z: o.z + d.z * t, kind: 'free' };
 }
 
 function shoot() {
@@ -346,6 +364,12 @@ function shoot() {
   world.balls.push(body);
   loose.push({ body, mesh });
   while (loose.length > MAX_LOOSE) removeLoose(loose[0]);
+  const sp = Math.hypot(sol.v.x, sol.v.y, sol.v.z);
+  logger.startShot(body, {
+    player, yaw: player.yaw, pitch: player.pitch, fov: camera.fov, zoom: zoomT,
+    target, rim: RIM, dist: fd, p0, v: sol.v, w: sol.w, speed: sp,
+    elevDeg: Math.asin(sol.v.y / sp) * 180 / Math.PI,
+  });
 
   stats.shots++;
   sound('release');
@@ -354,6 +378,7 @@ function shoot() {
 
 function removeLoose(l) {
   if (l.body.shot && !l.body.shot.resolved) resolveShot(l.body, false);
+  l.body.removed = true;
   scene.remove(l.mesh);
   world.balls.splice(world.balls.indexOf(l.body), 1);
   loose.splice(loose.indexOf(l), 1);
@@ -406,26 +431,31 @@ function syncBalls(dt) {
   }
 }
 
-// The held ball sits still in the lower right; a new one pops in after each shot.
-held.position.set(0.34, -0.38, -1.0);
+// The ball sits centered just below your line of sight, so a shot rises straight
+// up the screen into the crosshair instead of swinging across from the side.
+const HOLD = new THREE.Vector3(0, -0.3, -0.9), HOLD_LOW = -0.85;
+held.position.copy(HOLD);
 function updateHeld(dt) {
   if (!hasBall) {
     reload -= dt;
-    if (reload <= 0) { hasBall = true; held.scale.setScalar(0.2); }
+    if (reload <= 0) { hasBall = true; held.position.y = HOLD_LOW; }
   }
   held.visible = hasBall;
-  if (hasBall) held.scale.setScalar(Math.min(1, held.scale.x + dt * 8));
+  // Next ball comes up from the bottom of the screen instead of popping in mid-view.
+  if (hasBall) held.position.y += (HOLD.y - held.position.y) * (1 - Math.exp(-28 * dt));
 }
 
 function updateHud(dt) {
   const pct = stats.shots ? Math.round(stats.makes / stats.shots * 100) : 0;
   setText('stats', `<b>${stats.points}</b> pts<br>${stats.makes}/${stats.shots} (${pct}%) · streak ${stats.streak} · best ${stats.best}`);
+  setText('logstate', logger.mode === 'server' ? '● logging shots' : logger.mode === 'local' ? 'press L to save shot log' : '');
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').style.opacity = 0; }
 }
 
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  logger.onFrame(dt);
   updatePlayer(dt);
   acc += dt;
   let n = 0;
@@ -435,6 +465,8 @@ function frame(now) {
   updateNet();
   updateHeld(dt);
   updateHud(dt);
+  camera.updateMatrixWorld();
+  logger.sample(camera, projTmp, player.yaw, player.pitch);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
